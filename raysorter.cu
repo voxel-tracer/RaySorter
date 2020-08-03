@@ -12,14 +12,27 @@
 
 struct MortonKey
 {
-    signed int      oldSlot;
-    unsigned int    hash[6];        // 192-bit Morton key
+    int         oldSlot;
+    uint32_t    hash[6];        // 192-bit Morton key
 };
 
-void computeTmax(saved_path* paths, uint32_t numpaths, bbox bounds);
-void computeAABB(const saved_path* paths, uint32_t numpaths, bbox* aabb);
-void computeMortonCodes(const saved_path* paths, uint32_t numpaths, MortonKey* keys);
-void sortPaths(const saved_path* paths, uint32_t numpaths, const MortonKey* keys, saved_path* sorted);
+struct light_path {
+    vec3 origin;
+    vec3 direction;
+    float tmax;
+
+    light_path() {}
+    light_path(const saved_path& p) : origin(p.origin), direction(p.rayDir), tmax(FLT_MAX) {}
+};
+
+void computeTmax(light_path* paths, uint32_t numpaths, bbox bounds);
+bbox computeAABB(const light_path* paths, uint32_t numpaths);
+void computeMortonCodes(const light_path* paths, uint32_t numpaths, const bbox aabb, MortonKey* keys);
+void sortPaths(const saved_path* paths, uint32_t numpaths, MortonKey* keys, saved_path* sorted);
+
+bool tmax_bbox(const bbox& bounds, light_path& p);
+void collectBits(unsigned int* hash, int index, unsigned int value);
+int compareMortonKey(const void* A, const void* B);
 
 int main(int argc, char** argv)
 {
@@ -37,8 +50,12 @@ int main(int argc, char** argv)
     // load rays from bounce file
     uint32_t numpaths = nx * ny * ns;
     saved_path* paths = new saved_path[numpaths];
+    light_path* light = new light_path[numpaths];
     if (!load(file, paths, numpaths)) {
         return -1;
+    }
+    for (auto i = 0; i < numpaths; i++) {
+        light[i] = light_path(paths[i]);
     }
 
     // load scene's bvh and retrieve mesh bounds
@@ -54,17 +71,16 @@ int main(int argc, char** argv)
 
     // compute tmax for all paths
     std::cerr << "computing tmax" << std::endl;
-    computeTmax(paths, numpaths, bounds);
+    computeTmax(light, numpaths, bounds);
 
     // compute aabb for all paths
     std::cerr << "computing aabb" << std::endl;
-    bbox* aabb = new bbox[numpaths];
-    computeAABB(paths, numpaths, aabb);
+    bbox aabb = computeAABB(light, numpaths);
 
     // compute Morton code for all rays
     std::cerr << "computing Morton codes" << std::endl;
     MortonKey* keys = new MortonKey[numpaths];
-    computeMortonCodes(paths, numpaths, keys);
+    computeMortonCodes(light, numpaths, aabb, keys);
 
     // sort rays using their Morton codes
     std::cerr << "sorting paths" << std::endl;
@@ -78,21 +94,100 @@ int main(int argc, char** argv)
 
     // cleanup
     delete[] paths;
-    delete[] aabb;
+    delete[] light;
     delete[] keys;
     delete[] sorted;
 
     return 0;
 }
 
-void computeTmax(saved_path* paths, uint32_t numpaths, bbox bounds) {
+void computeTmax(light_path* paths, uint32_t numpaths, bbox bounds) {
+    for (auto i = 0; i < numpaths; i++) {
+        tmax_bbox(bounds, paths[i]);
+    }
 }
 
-void computeAABB(const saved_path* paths, uint32_t numpaths, bbox* aabb) {
+bbox computeAABB(const light_path* paths, uint32_t numpaths) {
+    bbox aabb;
+    aabb.min = vec3(FLT_MAX, FLT_MAX, FLT_MAX);
+    aabb.max = vec3(-FLT_MAX, -FLT_MAX, -FLT_MAX);
+
+    for (auto i = 0; i < numpaths; i++) {
+        const light_path& p = paths[i];
+        aabb.min = min(aabb.min, p.origin);
+        aabb.max = min(aabb.max, p.origin);
+
+        vec3 far = p.origin + p.tmax * p.direction;
+        aabb.min = min(aabb.min, far);
+        aabb.max = min(aabb.max, far);
+    }
+    return aabb;
 }
 
-void computeMortonCodes(const saved_path* paths, uint32_t numpaths, MortonKey* keys) {
+void computeMortonCodes(const light_path* paths, uint32_t numpaths, const bbox aabb, MortonKey* keys) {
+    for (auto i = 0; i < numpaths; i++) {
+        const light_path& p = paths[i];
+        MortonKey& key = keys[i];
+
+        // normalize origin and direction
+        vec3 o = (p.origin - aabb.min) / (aabb.max - aabb.min);
+        vec3 d = (p.direction - aabb.min) / (aabb.max - aabb.min);
+
+        // generate hash
+        key.oldSlot = i;
+        for (auto j = 0; j < 6; j++)
+            key.hash[j] = 0;
+        collectBits(key.hash, 0, (uint32_t)(o[0] * 256.0f * 65536.0f));
+        collectBits(key.hash, 1, (uint32_t)(o[1] * 256.0f * 65536.0f));
+        collectBits(key.hash, 2, (uint32_t)(o[2] * 256.0f * 65536.0f));
+        collectBits(key.hash, 3, (uint32_t)(d[0] * 32.0f * 65536.0f));
+        collectBits(key.hash, 4, (uint32_t)(d[1] * 32.0f * 65536.0f));
+        collectBits(key.hash, 5, (uint32_t)(d[2] * 32.0f * 65536.0f));
+    }
 }
 
-void sortPaths(const saved_path* paths, uint32_t numpaths, const MortonKey* keys, saved_path* sorted) {
+void sortPaths(const saved_path* paths, uint32_t numpaths, MortonKey* keys, saved_path* sorted) {
+    // sort Morton keys
+    qsort(keys, numpaths, sizeof(MortonKey), compareMortonKey);
+
+    // reorder paths using their sort order
+    for (auto i = 0; i < numpaths; i++) {
+        sorted[i] = paths[keys[i].oldSlot];
+    }
+}
+
+bool tmax_bbox(const bbox& bounds, light_path& p) {
+    float t_min = 0.001f;
+    p.tmax = FLT_MAX;
+    for (int a = 0; a < 3; a++) {
+        float invD = 1.0f / p.direction[a];
+        float t0 = (bounds.min[a] - p.origin[a]) * invD;
+        float t1 = (bounds.max[a] - p.origin[a]) * invD;
+        if (invD < 0.0f) {
+            float tmp = t0; t0 = t1; t1 = tmp;
+        }
+        t_min = t0 > t_min ? t0 : t_min;
+        p.tmax = t1 < p.tmax ? t1 : p.tmax;
+        if (p.tmax < t_min)
+            return false;
+    }
+
+    return true;
+}
+
+void collectBits(unsigned int* hash, int index, unsigned int value) {
+    for (int i = 0; i < 32; i++)
+        hash[(index + i * 6) >> 5] |= ((value >> i) & 1) << ((index + i * 6) & 31);
+}
+
+int compareMortonKey(const void* A, const void* B) {
+    const MortonKey& a = *((const MortonKey*)A);
+    const MortonKey& b = *((const MortonKey*)B);
+    if (a.hash[5] != b.hash[5]) return (a.hash[5] < b.hash[5]) ? -1 : 1;
+    if (a.hash[4] != b.hash[4]) return (a.hash[4] < b.hash[4]) ? -1 : 1;
+    if (a.hash[3] != b.hash[3]) return (a.hash[3] < b.hash[3]) ? -1 : 1;
+    if (a.hash[2] != b.hash[2]) return (a.hash[2] < b.hash[2]) ? -1 : 1;
+    if (a.hash[1] != b.hash[1]) return (a.hash[1] < b.hash[1]) ? -1 : 1;
+    if (a.hash[0] != b.hash[0]) return (a.hash[0] < b.hash[0]) ? -1 : 1;
+    return 0;
 }
