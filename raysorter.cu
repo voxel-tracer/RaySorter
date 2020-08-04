@@ -44,7 +44,7 @@ int main(int argc, char** argv)
     int bounce = 0;
     if (argc > 1)
         bounce = strtol(argv[1], NULL, 10);
-    std::string file = filename(bounce, ns);
+    std::string file = filename(bounce, ns, false);
     std::cerr << "loading bounce file " << file << std::endl;
 
     // load rays from bounce file
@@ -88,7 +88,7 @@ int main(int argc, char** argv)
     sortPaths(paths, numpaths, keys, sorted);
 
     // save rays to .sorted file
-    std::string outfile = file + ".sorted";
+    std::string outfile = filename(bounce, ns, true);
     std::cerr << "saving file " << outfile << std::endl;
     save(outfile, sorted, numpaths);
 
@@ -115,11 +115,11 @@ bbox computeAABB(const light_path* paths, uint32_t numpaths) {
     for (auto i = 0; i < numpaths; i++) {
         const light_path& p = paths[i];
         aabb.min = min(aabb.min, p.origin);
-        aabb.max = min(aabb.max, p.origin);
+        aabb.max = max(aabb.max, p.origin);
 
         vec3 far = p.origin + p.tmax * p.direction;
         aabb.min = min(aabb.min, far);
-        aabb.max = min(aabb.max, far);
+        aabb.max = max(aabb.max, far);
     }
     return aabb;
 }
