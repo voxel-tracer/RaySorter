@@ -4,6 +4,8 @@
 
 #include <stdio.h>
 
+#define DEBUG_SORT
+
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
@@ -112,6 +114,9 @@ bbox computeAABB(const light_path* paths, uint32_t numpaths) {
     aabb.min = vec3(FLT_MAX, FLT_MAX, FLT_MAX);
     aabb.max = vec3(-FLT_MAX, -FLT_MAX, -FLT_MAX);
 
+#ifdef DEBUG_SORT
+    bool first = true;
+#endif
     for (auto i = 0; i < numpaths; i++) {
         const light_path& p = paths[i];
         aabb.min = min(aabb.min, p.origin);
@@ -120,6 +125,15 @@ bbox computeAABB(const light_path* paths, uint32_t numpaths) {
         vec3 far = p.origin + p.tmax * p.direction;
         aabb.min = min(aabb.min, far);
         aabb.max = max(aabb.max, far);
+#ifdef DEBUG_SORT
+        if (aabb.min[0] == -FLT_MAX && first) {
+            std::cerr << "aabb.min = " << aabb.min << std::endl;
+            std::cerr << "i = " << i << std::endl;
+            std::cerr << "p.origin = " << p.origin << std::endl;
+            std::cerr << "p.direction = " << p.direction << std::endl;
+            first = false;
+        }
+#endif
     }
     return aabb;
 }
@@ -143,6 +157,17 @@ void computeMortonCodes(const light_path* paths, uint32_t numpaths, const bbox a
         collectBits(key.hash, 3, (uint32_t)(d[0] * 32.0f * 65536.0f));
         collectBits(key.hash, 4, (uint32_t)(d[1] * 32.0f * 65536.0f));
         collectBits(key.hash, 5, (uint32_t)(d[2] * 32.0f * 65536.0f));
+#ifdef DEBUG_SORT
+        if (i == 500) {
+            std::cerr << "key.oldSlot = " << key.oldSlot << std::endl;
+            std::cerr << "key.hash = ";
+            for (size_t j = 0; j < 6; j++)
+                std::cerr << key.hash[j] << " ";
+            std::cerr << std::endl;
+            std::cerr << "aabb.min = " << aabb.min << std::endl;
+            std::cerr << "aabb.max = " << aabb.max << std::endl;
+        }
+#endif // DEBUG_SORT
     }
 }
 
