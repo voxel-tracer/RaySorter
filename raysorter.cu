@@ -3,8 +3,11 @@
 #include "device_launch_parameters.h"
 
 #include <stdio.h>
+#include <random>
 
 #define DEBUG_SORT
+
+#define SAVE_BITSTACK
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -35,6 +38,7 @@ void sortPaths(const saved_path* paths, uint32_t numpaths, MortonKey* keys, save
 bool tmax_bbox(const bbox& bounds, light_path& p);
 void collectBits(unsigned int* hash, int index, unsigned int value);
 int compareMortonKey(const void* A, const void* B);
+int compareSavedPath(const void* A, const void* B);
 
 int main(int argc, char** argv)
 {
@@ -56,6 +60,13 @@ int main(int argc, char** argv)
     if (!load(file, paths, numpaths)) {
         return -1;
     }
+    //// replace bitstack with a random number
+    //std::random_device rd;
+    //std::mt19937 gen(rd());
+    //for (auto i = 0; i < numpaths; i++) {
+    //    paths[i].bitstack = gen();
+    //}
+
     for (auto i = 0; i < numpaths; i++) {
         light[i] = light_path(paths[i]);
     }
@@ -94,6 +105,13 @@ int main(int argc, char** argv)
     std::cerr << "saving file " << outfile << std::endl;
     save(outfile, sorted, numpaths);
 
+    //qsort(paths, numpaths, sizeof(saved_path), compareSavedPath);
+
+    //// save rays to .sorted file
+    //std::string outfile = filename(bounce, ns, true);
+    //std::cerr << "saving file " << outfile << std::endl;
+    //save(outfile, paths, numpaths);
+
     // cleanup
     delete[] paths;
     delete[] light;
@@ -105,7 +123,8 @@ int main(int argc, char** argv)
 
 void computeTmax(light_path* paths, uint32_t numpaths, bbox bounds) {
     for (auto i = 0; i < numpaths; i++) {
-        tmax_bbox(bounds, paths[i]);
+        //tmax_bbox(bounds, paths[i]);
+        paths[i].tmax = 1.0f;
     }
 }
 
@@ -215,4 +234,11 @@ int compareMortonKey(const void* A, const void* B) {
     if (a.hash[1] != b.hash[1]) return (a.hash[1] < b.hash[1]) ? -1 : 1;
     if (a.hash[0] != b.hash[0]) return (a.hash[0] < b.hash[0]) ? -1 : 1;
     return 0;
+}
+
+int compareSavedPath(const void* A, const void* B) {
+    const saved_path& a = *((const saved_path*)A);
+    const saved_path& b = *((const saved_path*)B);
+    if (a.bitstack == b.bitstack) return 0;
+    return a.bitstack < b.bitstack ? -1 : 1;
 }
