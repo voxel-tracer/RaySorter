@@ -10,7 +10,7 @@
 #define SAVE_BITSTACK
 
 #define STB_IMAGE_IMPLEMENTATION
-#include "stb_image.h"
+#include "../cuda-raytracing-optimized/stb_image.h"
 
 #include "../SingleBounceKernel/sbk.h"
 #include "../cuda-raytracing-optimized/staircase_scene.h"
